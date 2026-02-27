@@ -97,27 +97,20 @@ function get_records($object, $params) {
         $err = curl_error($ch);
         $errno = curl_errno($ch);
         curl_close($ch);
-        return [
-            "error" => "curl_error",
-            "errno" => $errno,
-            "message" => $err,
-            "url" => $url,
-        ];
+    
+        error_log("HubSpot cURL error ($errno): $err | URL: $url");
+        return []; // IMPORTANT: always return a list
     }
-
+    
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-
-    // Decode the JSON response from the API into a PHP array
+    
     $result = json_decode($output, true);
-
-    // If HubSpot returns a non-2xx, return the error payload (prevents PHP warnings downstream)
+    
     if ($httpCode >= 400) {
-        return [
-            "error" => "hubspot_http_error",
-            "status" => $httpCode,
-            "response" => $result,
-        ];
+        $msg = is_array($result) ? json_encode($result) : $output;
+        error_log("HubSpot HTTP error ($httpCode) | URL: $url | Response: $msg");
+        return []; // IMPORTANT: always return a list
     }
 
     // Initialize an empty array to hold the records
