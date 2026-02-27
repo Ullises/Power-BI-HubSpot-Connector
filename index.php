@@ -1,5 +1,15 @@
 <?php
 
+// --- Timeout fixes for Railway / HubSpot slow responses ---
+set_time_limit(300); // 5 minutes
+ini_set('max_execution_time', '300');
+ini_set('default_socket_timeout', '300');
+
+// Log PHP errors to server logs (Railway) but don't print them to clients (Power BI expects JSON)
+ini_set('log_errors', '1');
+ini_set('display_errors', '0');
+error_reporting(E_ALL);
+
 /* #########################
 * This code was developed by:
 * Audox Ingeniería SpA.
@@ -75,12 +85,40 @@ function get_records($object, $params) {
     curl_setopt($ch, CURLOPT_HTTPHEADER, $headers); // Set the headers
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true); // Return the response as a string
 
-    // Execute the cURL request and close the session
+    // --- cURL timeouts (important for HubSpot + Railway) ---
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 30); // seconds to connect
+    curl_setopt($ch, CURLOPT_TIMEOUT, 300);       // max seconds for the whole request
+
+    // Execute the cURL request
     $output = curl_exec($ch);
+
+    // Handle transport errors (timeout, DNS, etc.)
+    if ($output === false) {
+        $err = curl_error($ch);
+        $errno = curl_errno($ch);
+        curl_close($ch);
+        return [
+            "error" => "curl_error",
+            "errno" => $errno,
+            "message" => $err,
+            "url" => $url,
+        ];
+    }
+
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
     // Decode the JSON response from the API into a PHP array
     $result = json_decode($output, true);
+
+    // If HubSpot returns a non-2xx, return the error payload (prevents PHP warnings downstream)
+    if ($httpCode >= 400) {
+        return [
+            "error" => "hubspot_http_error",
+            "status" => $httpCode,
+            "response" => $result,
+        ];
+    }
 
     // Initialize an empty array to hold the records
     $records = [];
@@ -93,7 +131,7 @@ function get_records($object, $params) {
                 $associations = $record['associations']['companies']['results'];
                 foreach ($associations as $association) {
                     // Map company ID to the record if the association type matches
-                    if (($object == "deals" && $association['type'] == "deal_to_company") || 
+                    if (($object == "deals" && $association['type'] == "deal_to_company") ||
                         ($object == "contacts" && $association['type'] == "contact_to_company")) {
                         $record['properties']['company_id'] = $association['id'];
                         break; // Stop after finding the first matching association
@@ -137,7 +175,7 @@ function main(array $args) {
 
     // Filter parameters from the arguments, keeping only scalar values
     $params = array_filter($args, 'is_scalar');
-    
+
     // Extract the 'action' and 'object' values from the parameters, if they exist
     foreach(['action', 'object'] as $param){
         ${$param} = isset($params[$param]) ? $params[$param] : null;
